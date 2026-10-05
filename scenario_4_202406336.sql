@@ -1,196 +1,193 @@
 -- ICT371 PostgreSQL Scenario Assignment
--- Scenario 6: University Event Seat Booking
+-- Scenario 4: Campus Clinic Medicine Dispensing
 -- Student number: STUDENTNUMBER
 -- (Run in pgAdmin Query Tool; RAISE NOTICE output appears in the Messages tab)
 
-DROP TABLE IF EXISTS bookings CASCADE;
-DROP TABLE IF EXISTS events CASCADE;
+DROP TABLE IF EXISTS dispensing_records CASCADE;
+DROP TABLE IF EXISTS medicines CASCADE;
 
 ------------------------------------------------------------
--- 1. Create tables and add at least three events
+-- 1. Create tables and add at least three medicines
 ------------------------------------------------------------
-CREATE TABLE events (
-    event_id        SERIAL PRIMARY KEY,
-    event_name      VARCHAR(100) NOT NULL,
-    available_seats INT NOT NULL CHECK (available_seats >= 0)
+CREATE TABLE medicines (
+    medicine_id    SERIAL PRIMARY KEY,
+    medicine_name  VARCHAR(100) NOT NULL,
+    stock_quantity INT NOT NULL CHECK (stock_quantity >= 0)
 );
 
-CREATE TABLE bookings (
-    booking_id      SERIAL PRIMARY KEY,
-    event_id        INT NOT NULL REFERENCES events(event_id),
-    student_number  VARCHAR(20) NOT NULL,
-    number_of_seats INT NOT NULL CHECK (number_of_seats > 0),
-    status          VARCHAR(20) NOT NULL DEFAULT 'BOOKED'
+CREATE TABLE dispensing_records (
+    record_id      SERIAL PRIMARY KEY,
+    medicine_id    INT NOT NULL REFERENCES medicines(medicine_id),
+    student_number VARCHAR(20) NOT NULL,
+    quantity       INT NOT NULL CHECK (quantity > 0),
+    status         VARCHAR(20) NOT NULL DEFAULT 'DISPENSED'
 );
 
-INSERT INTO events (event_name, available_seats) VALUES
-    ('Freshers Welcome Party', 150),
-    ('Tech Symposium', 8),
-    ('Career Fair', 0),
-    ('Engineering Expo', 40);
+INSERT INTO medicines (medicine_name, stock_quantity) VALUES
+    ('Paracetamol 500mg', 100),
+    ('Amoxicillin 250mg', 15),
+    ('Artemether-Lumefantrine', 0),
+    ('Oral Rehydration Salts', 40);
 
-SELECT * FROM events ORDER BY event_id;
+SELECT * FROM medicines ORDER BY medicine_id;
 
 ------------------------------------------------------------
--- 2. IF / ELSIF / ELSE: seat availability of each event
+-- 2. IF / ELSIF / ELSE: stock level of each medicine
 ------------------------------------------------------------
 DO $$
 DECLARE
     r RECORD;
 BEGIN
-    FOR r IN SELECT event_name, available_seats FROM events ORDER BY event_id LOOP
-        IF r.available_seats = 0 THEN
-            RAISE NOTICE '%: FULL', r.event_name;
-        ELSIF r.available_seats <= 10 THEN
-            RAISE NOTICE '%: NEARLY FULL (% seats left)', r.event_name, r.available_seats;
+    FOR r IN SELECT medicine_name, stock_quantity FROM medicines ORDER BY medicine_id LOOP
+        IF r.stock_quantity = 0 THEN
+            RAISE NOTICE '%: OUT OF STOCK', r.medicine_name;
+        ELSIF r.stock_quantity <= 20 THEN
+            RAISE NOTICE '%: LOW on stock (% units)', r.medicine_name, r.stock_quantity;
         ELSE
-            RAISE NOTICE '%: plenty of seats (%)', r.event_name, r.available_seats;
+            RAISE NOTICE '%: sufficiently stocked (% units)', r.medicine_name, r.stock_quantity;
         END IF;
     END LOOP;
 END $$;
 
 ------------------------------------------------------------
--- 3. WHILE loop (booking reminder days) and numeric FOR loop (entrance checks)
+-- 3. WHILE loop (stock review days) and numeric FOR loop (shelf inspections)
 ------------------------------------------------------------
 DO $$
 DECLARE
     d INT := 1;
 BEGIN
     WHILE d <= 3 LOOP
-        RAISE NOTICE 'Booking reminder day %', d;
+        RAISE NOTICE 'Stock review day %', d;
         d := d + 1;
     END LOOP;
 
-    FOR c IN 1..3 LOOP
-        RAISE NOTICE 'Entrance check number %', c;
+    FOR s IN 1..3 LOOP
+        RAISE NOTICE 'Shelf inspection number %', s;
     END LOOP;
 END $$;
 
 ------------------------------------------------------------
--- 4. book_seats procedure
+-- 4. dispense_medicine procedure
 ------------------------------------------------------------
-CREATE OR REPLACE PROCEDURE book_seats(p_event_id INT, p_student VARCHAR, p_seats INT)
+CREATE OR REPLACE PROCEDURE dispense_medicine(p_medicine_id INT, p_student VARCHAR, p_qty INT)
 LANGUAGE plpgsql
 AS $$
 DECLARE
-    v_available INT;
+    v_stock INT;
 BEGIN
-    IF p_seats IS NULL OR p_seats <= 0 THEN
-        RAISE EXCEPTION 'Invalid number of seats: % (must be greater than zero)', p_seats;
+    IF p_qty IS NULL OR p_qty <= 0 THEN
+        RAISE EXCEPTION 'Invalid quantity: % (must be greater than zero)', p_qty;
     END IF;
 
-    SELECT available_seats INTO v_available
-    FROM events
-    WHERE event_id = p_event_id
+    SELECT stock_quantity INTO v_stock
+    FROM medicines
+    WHERE medicine_id = p_medicine_id
     FOR UPDATE;
 
     IF NOT FOUND THEN
-        RAISE EXCEPTION 'Event % does not exist', p_event_id;
+        RAISE EXCEPTION 'Medicine % does not exist', p_medicine_id;
     END IF;
 
-    IF v_available < p_seats THEN
-        RAISE NOTICE 'Booking REJECTED for student %: requested %, only % seats left',
-                     p_student, p_seats, v_available;
+    IF v_stock < p_qty THEN
+        RAISE NOTICE 'Dispensing REJECTED for student %: requested %, only % in stock',
+                     p_student, p_qty, v_stock;
         RETURN;
     END IF;
 
-    UPDATE events
-    SET available_seats = available_seats - p_seats
-    WHERE event_id = p_event_id;
+    UPDATE medicines
+    SET stock_quantity = stock_quantity - p_qty
+    WHERE medicine_id = p_medicine_id;
 
-    INSERT INTO bookings (event_id, student_number, number_of_seats, status)
-    VALUES (p_event_id, p_student, p_seats, 'BOOKED');
+    INSERT INTO dispensing_records (medicine_id, student_number, quantity, status)
+    VALUES (p_medicine_id, p_student, p_qty, 'DISPENSED');
 
-    RAISE NOTICE 'Booking recorded: student % booked % seat(s) for event %',
-                 p_student, p_seats, p_event_id;
+    RAISE NOTICE 'Dispensed % unit(s) of medicine % to student %',
+                 p_qty, p_medicine_id, p_student;
 END $$;
 
 ------------------------------------------------------------
--- 5. Two valid bookings and one exceeding the remaining seats
+-- 5. Two valid quantities and one exceeding stock
 ------------------------------------------------------------
-CALL book_seats(1, '2024001', 4);    -- valid
-CALL book_seats(2, '2024002', 5);    -- valid (leaves 3 seats)
-CALL book_seats(2, '2024003', 10);   -- exceeds remaining seats
+CALL dispense_medicine(1, '2024001', 20);   -- valid
+CALL dispense_medicine(2, '2024002', 10);   -- valid (leaves 5)
+CALL dispense_medicine(2, '2024003', 50);   -- exceeds stock
 
-SELECT * FROM events ORDER BY event_id;
-SELECT * FROM bookings ORDER BY booking_id;
+SELECT * FROM medicines ORDER BY medicine_id;
+SELECT * FROM dispensing_records ORDER BY record_id;
 
 ------------------------------------------------------------
--- 6. cancel_booking procedure (second call must not release seats again)
+-- 6. reverse_dispensing procedure (stock restored only once)
 ------------------------------------------------------------
-CREATE OR REPLACE PROCEDURE cancel_booking(p_booking_id INT)
+CREATE OR REPLACE PROCEDURE reverse_dispensing(p_record_id INT)
 LANGUAGE plpgsql
 AS $$
 DECLARE
-    v_event_id INT;
-    v_seats    INT;
-    v_status   VARCHAR(20);
+    v_medicine_id INT;
+    v_qty         INT;
+    v_status      VARCHAR(20);
 BEGIN
-    SELECT event_id, number_of_seats, status
-    INTO v_event_id, v_seats, v_status
-    FROM bookings
-    WHERE booking_id = p_booking_id
+    SELECT medicine_id, quantity, status
+    INTO v_medicine_id, v_qty, v_status
+    FROM dispensing_records
+    WHERE record_id = p_record_id
     FOR UPDATE;
 
     IF NOT FOUND THEN
-        RAISE NOTICE 'Booking % does not exist', p_booking_id;
+        RAISE NOTICE 'Dispensing record % does not exist', p_record_id;
         RETURN;
     END IF;
 
-    IF v_status = 'CANCELLED' THEN
-        RAISE NOTICE 'Booking % is already cancelled; no seats released', p_booking_id;
+    IF v_status = 'REVERSED' THEN
+        RAISE NOTICE 'Record % is already reversed; stock not restored again', p_record_id;
         RETURN;
     END IF;
 
-    UPDATE events
-    SET available_seats = available_seats + v_seats
-    WHERE event_id = v_event_id;
+    UPDATE medicines
+    SET stock_quantity = stock_quantity + v_qty
+    WHERE medicine_id = v_medicine_id;
 
-    UPDATE bookings
-    SET status = 'CANCELLED'
-    WHERE booking_id = p_booking_id;
+    UPDATE dispensing_records
+    SET status = 'REVERSED'
+    WHERE record_id = p_record_id;
 
-    RAISE NOTICE 'Booking % cancelled; % seat(s) released', p_booking_id, v_seats;
+    RAISE NOTICE 'Record % reversed; % unit(s) restored to stock', p_record_id, v_qty;
 END $$;
 
-CALL cancel_booking(2);   -- first call releases seats
-CALL cancel_booking(2);   -- second call does nothing
+CALL reverse_dispensing(2);   -- first call restores stock
+CALL reverse_dispensing(2);   -- second call does nothing
 
-SELECT * FROM events ORDER BY event_id;
-SELECT * FROM bookings ORDER BY booking_id;
+SELECT * FROM medicines ORDER BY medicine_id;
+SELECT * FROM dispensing_records ORDER BY record_id;
 
 ------------------------------------------------------------
--- 7. Explicit cursor: full or nearly full events (10 seats or fewer)
+-- 7. Explicit cursor: medicines below a low-stock threshold
 ------------------------------------------------------------
 DO $$
 DECLARE
-    cur_events CURSOR FOR
-        SELECT event_name, available_seats
-        FROM events
-        WHERE available_seats <= 10
-        ORDER BY available_seats, event_name;
-    v_name  events.event_name%TYPE;
-    v_seats events.available_seats%TYPE;
+    v_threshold CONSTANT INT := 20;
+    cur_low CURSOR (p_limit INT) FOR
+        SELECT medicine_name, stock_quantity
+        FROM medicines
+        WHERE stock_quantity < p_limit
+        ORDER BY stock_quantity, medicine_name;
+    v_name  medicines.medicine_name%TYPE;
+    v_stock medicines.stock_quantity%TYPE;
 BEGIN
-    OPEN cur_events;
+    OPEN cur_low(v_threshold);
     LOOP
-        FETCH cur_events INTO v_name, v_seats;
+        FETCH cur_low INTO v_name, v_stock;
         EXIT WHEN NOT FOUND;
-        IF v_seats = 0 THEN
-            RAISE NOTICE 'Event "%" is FULL', v_name;
-        ELSE
-            RAISE NOTICE 'Event "%" is nearly full (% seats left)', v_name, v_seats;
-        END IF;
+        RAISE NOTICE 'Below threshold of %: % (% units)', v_threshold, v_name, v_stock;
     END LOOP;
-    CLOSE cur_events;
+    CLOSE cur_low;
 END $$;
 
 ------------------------------------------------------------
--- 8. Book zero seats; handle with EXCEPTION
+-- 8. Negative dispensing quantity; handle with EXCEPTION
 ------------------------------------------------------------
 DO $$
 BEGIN
-    CALL book_seats(1, '2024004', 0);
+    CALL dispense_medicine(1, '2024004', -5);
 EXCEPTION
     WHEN OTHERS THEN
         RAISE NOTICE 'Error handled: %', SQLERRM;
@@ -199,5 +196,5 @@ END $$;
 ------------------------------------------------------------
 -- 9. Final state of both tables
 ------------------------------------------------------------
-SELECT * FROM events ORDER BY event_id;
-SELECT * FROM bookings ORDER BY booking_id;
+SELECT * FROM medicines ORDER BY medicine_id;
+SELECT * FROM dispensing_records ORDER BY record_id;

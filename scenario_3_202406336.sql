@@ -1,193 +1,192 @@
 -- ICT371 PostgreSQL Scenario Assignment
--- Scenario 4: Campus Clinic Medicine Dispensing
+-- Scenario 3: Student Hostel Room Allocation
 -- Student number: STUDENTNUMBER
 -- (Run in pgAdmin Query Tool; RAISE NOTICE output appears in the Messages tab)
 
-DROP TABLE IF EXISTS dispensing_records CASCADE;
-DROP TABLE IF EXISTS medicines CASCADE;
+DROP TABLE IF EXISTS allocations CASCADE;
+DROP TABLE IF EXISTS hostel_rooms CASCADE;
 
 ------------------------------------------------------------
--- 1. Create tables and add at least three medicines
+-- 1. Create tables and add at least three rooms
 ------------------------------------------------------------
-CREATE TABLE medicines (
-    medicine_id    SERIAL PRIMARY KEY,
-    medicine_name  VARCHAR(100) NOT NULL,
-    stock_quantity INT NOT NULL CHECK (stock_quantity >= 0)
+CREATE TABLE hostel_rooms (
+    room_id          SERIAL PRIMARY KEY,
+    room_name        VARCHAR(20) NOT NULL,
+    available_spaces INT NOT NULL CHECK (available_spaces >= 0)
 );
 
-CREATE TABLE dispensing_records (
-    record_id      SERIAL PRIMARY KEY,
-    medicine_id    INT NOT NULL REFERENCES medicines(medicine_id),
+CREATE TABLE allocations (
+    allocation_id  SERIAL PRIMARY KEY,
     student_number VARCHAR(20) NOT NULL,
-    quantity       INT NOT NULL CHECK (quantity > 0),
-    status         VARCHAR(20) NOT NULL DEFAULT 'DISPENSED'
+    room_id        INT NOT NULL REFERENCES hostel_rooms(room_id),
+    status         VARCHAR(20) NOT NULL DEFAULT 'ACTIVE'
 );
 
-INSERT INTO medicines (medicine_name, stock_quantity) VALUES
-    ('Paracetamol 500mg', 100),
-    ('Amoxicillin 250mg', 15),
-    ('Artemether-Lumefantrine', 0),
-    ('Oral Rehydration Salts', 40);
+INSERT INTO hostel_rooms (room_name, available_spaces) VALUES
+    ('A101', 4),
+    ('B102', 1),
+    ('C201', 0),
+    ('D301', 3);
 
-SELECT * FROM medicines ORDER BY medicine_id;
+SELECT * FROM hostel_rooms ORDER BY room_id;
 
 ------------------------------------------------------------
--- 2. IF / ELSIF / ELSE: stock level of each medicine
+-- 2. IF / ELSIF / ELSE: room occupancy report
 ------------------------------------------------------------
 DO $$
 DECLARE
     r RECORD;
 BEGIN
-    FOR r IN SELECT medicine_name, stock_quantity FROM medicines ORDER BY medicine_id LOOP
-        IF r.stock_quantity = 0 THEN
-            RAISE NOTICE '%: OUT OF STOCK', r.medicine_name;
-        ELSIF r.stock_quantity <= 20 THEN
-            RAISE NOTICE '%: LOW on stock (% units)', r.medicine_name, r.stock_quantity;
+    FOR r IN SELECT room_name, available_spaces FROM hostel_rooms ORDER BY room_id LOOP
+        IF r.available_spaces = 0 THEN
+            RAISE NOTICE 'Room %: FULL', r.room_name;
+        ELSIF r.available_spaces = 1 THEN
+            RAISE NOTICE 'Room %: only ONE space left', r.room_name;
         ELSE
-            RAISE NOTICE '%: sufficiently stocked (% units)', r.medicine_name, r.stock_quantity;
+            RAISE NOTICE 'Room %: several spaces available (%)', r.room_name, r.available_spaces;
         END IF;
     END LOOP;
 END $$;
 
 ------------------------------------------------------------
--- 3. WHILE loop (stock review days) and numeric FOR loop (shelf inspections)
+-- 3. WHILE loop (inspection days) and numeric FOR loop (room checks)
 ------------------------------------------------------------
 DO $$
 DECLARE
     d INT := 1;
 BEGIN
     WHILE d <= 3 LOOP
-        RAISE NOTICE 'Stock review day %', d;
+        RAISE NOTICE 'Hostel inspection day %', d;
         d := d + 1;
     END LOOP;
 
-    FOR s IN 1..3 LOOP
-        RAISE NOTICE 'Shelf inspection number %', s;
+    FOR chk IN 1..3 LOOP
+        RAISE NOTICE 'Room check number %', chk;
     END LOOP;
 END $$;
 
 ------------------------------------------------------------
--- 4. dispense_medicine procedure
+-- 4. allocate_room procedure
 ------------------------------------------------------------
-CREATE OR REPLACE PROCEDURE dispense_medicine(p_medicine_id INT, p_student VARCHAR, p_qty INT)
+CREATE OR REPLACE PROCEDURE allocate_room(p_student VARCHAR, p_room_id INT)
 LANGUAGE plpgsql
 AS $$
 DECLARE
-    v_stock INT;
+    v_spaces INT;
 BEGIN
-    IF p_qty IS NULL OR p_qty <= 0 THEN
-        RAISE EXCEPTION 'Invalid quantity: % (must be greater than zero)', p_qty;
+    IF p_student IS NULL OR TRIM(p_student) = '' THEN
+        RAISE EXCEPTION 'Invalid input: student number cannot be blank';
     END IF;
 
-    SELECT stock_quantity INTO v_stock
-    FROM medicines
-    WHERE medicine_id = p_medicine_id
+    SELECT available_spaces INTO v_spaces
+    FROM hostel_rooms
+    WHERE room_id = p_room_id
     FOR UPDATE;
 
     IF NOT FOUND THEN
-        RAISE EXCEPTION 'Medicine % does not exist', p_medicine_id;
+        RAISE EXCEPTION 'Room % does not exist', p_room_id;
     END IF;
 
-    IF v_stock < p_qty THEN
-        RAISE NOTICE 'Dispensing REJECTED for student %: requested %, only % in stock',
-                     p_student, p_qty, v_stock;
+    IF v_spaces < 1 THEN
+        RAISE NOTICE 'Allocation REJECTED for student %: room % is full', p_student, p_room_id;
         RETURN;
     END IF;
 
-    UPDATE medicines
-    SET stock_quantity = stock_quantity - p_qty
-    WHERE medicine_id = p_medicine_id;
+    UPDATE hostel_rooms
+    SET available_spaces = available_spaces - 1
+    WHERE room_id = p_room_id;
 
-    INSERT INTO dispensing_records (medicine_id, student_number, quantity, status)
-    VALUES (p_medicine_id, p_student, p_qty, 'DISPENSED');
+    INSERT INTO allocations (student_number, room_id, status)
+    VALUES (TRIM(p_student), p_room_id, 'ACTIVE');
 
-    RAISE NOTICE 'Dispensed % unit(s) of medicine % to student %',
-                 p_qty, p_medicine_id, p_student;
+    RAISE NOTICE 'Student % allocated to room %', p_student, p_room_id;
 END $$;
 
 ------------------------------------------------------------
--- 5. Two valid quantities and one exceeding stock
+-- 5. Two valid allocations and one to a full room
 ------------------------------------------------------------
-CALL dispense_medicine(1, '2024001', 20);   -- valid
-CALL dispense_medicine(2, '2024002', 10);   -- valid (leaves 5)
-CALL dispense_medicine(2, '2024003', 50);   -- exceeds stock
+CALL allocate_room('2024001', 1);   -- valid
+CALL allocate_room('2024002', 2);   -- valid (room B102 becomes full)
+CALL allocate_room('2024003', 3);   -- room C201 is full
 
-SELECT * FROM medicines ORDER BY medicine_id;
-SELECT * FROM dispensing_records ORDER BY record_id;
+SELECT * FROM hostel_rooms ORDER BY room_id;
+SELECT * FROM allocations ORDER BY allocation_id;
 
 ------------------------------------------------------------
--- 6. reverse_dispensing procedure (stock restored only once)
+-- 6. check_out procedure (second call must not free another space)
 ------------------------------------------------------------
-CREATE OR REPLACE PROCEDURE reverse_dispensing(p_record_id INT)
+CREATE OR REPLACE PROCEDURE check_out(p_allocation_id INT)
 LANGUAGE plpgsql
 AS $$
 DECLARE
-    v_medicine_id INT;
-    v_qty         INT;
-    v_status      VARCHAR(20);
+    v_room_id INT;
+    v_status  VARCHAR(20);
 BEGIN
-    SELECT medicine_id, quantity, status
-    INTO v_medicine_id, v_qty, v_status
-    FROM dispensing_records
-    WHERE record_id = p_record_id
+    SELECT room_id, status INTO v_room_id, v_status
+    FROM allocations
+    WHERE allocation_id = p_allocation_id
     FOR UPDATE;
 
     IF NOT FOUND THEN
-        RAISE NOTICE 'Dispensing record % does not exist', p_record_id;
+        RAISE NOTICE 'Allocation % does not exist', p_allocation_id;
         RETURN;
     END IF;
 
-    IF v_status = 'REVERSED' THEN
-        RAISE NOTICE 'Record % is already reversed; stock not restored again', p_record_id;
+    IF v_status = 'COMPLETE' THEN
+        RAISE NOTICE 'Allocation % is already checked out; no space released', p_allocation_id;
         RETURN;
     END IF;
 
-    UPDATE medicines
-    SET stock_quantity = stock_quantity + v_qty
-    WHERE medicine_id = v_medicine_id;
+    UPDATE hostel_rooms
+    SET available_spaces = available_spaces + 1
+    WHERE room_id = v_room_id;
 
-    UPDATE dispensing_records
-    SET status = 'REVERSED'
-    WHERE record_id = p_record_id;
+    UPDATE allocations
+    SET status = 'COMPLETE'
+    WHERE allocation_id = p_allocation_id;
 
-    RAISE NOTICE 'Record % reversed; % unit(s) restored to stock', p_record_id, v_qty;
+    RAISE NOTICE 'Allocation % checked out; one space released in room %',
+                 p_allocation_id, v_room_id;
 END $$;
 
-CALL reverse_dispensing(2);   -- first call restores stock
-CALL reverse_dispensing(2);   -- second call does nothing
+CALL check_out(2);   -- first call frees a space in B102
+CALL check_out(2);   -- second call does nothing
 
-SELECT * FROM medicines ORDER BY medicine_id;
-SELECT * FROM dispensing_records ORDER BY record_id;
+SELECT * FROM hostel_rooms ORDER BY room_id;
+SELECT * FROM allocations ORDER BY allocation_id;
 
 ------------------------------------------------------------
--- 7. Explicit cursor: medicines below a low-stock threshold
+-- 7. Explicit cursor: full or nearly full rooms (1 space or fewer)
 ------------------------------------------------------------
 DO $$
 DECLARE
-    v_threshold CONSTANT INT := 20;
-    cur_low CURSOR (p_limit INT) FOR
-        SELECT medicine_name, stock_quantity
-        FROM medicines
-        WHERE stock_quantity < p_limit
-        ORDER BY stock_quantity, medicine_name;
-    v_name  medicines.medicine_name%TYPE;
-    v_stock medicines.stock_quantity%TYPE;
+    cur_rooms CURSOR FOR
+        SELECT room_name, available_spaces
+        FROM hostel_rooms
+        WHERE available_spaces <= 1
+        ORDER BY room_name;
+    v_name   hostel_rooms.room_name%TYPE;
+    v_spaces hostel_rooms.available_spaces%TYPE;
 BEGIN
-    OPEN cur_low(v_threshold);
+    OPEN cur_rooms;
     LOOP
-        FETCH cur_low INTO v_name, v_stock;
+        FETCH cur_rooms INTO v_name, v_spaces;
         EXIT WHEN NOT FOUND;
-        RAISE NOTICE 'Below threshold of %: % (% units)', v_threshold, v_name, v_stock;
+        IF v_spaces = 0 THEN
+            RAISE NOTICE 'Room % is FULL', v_name;
+        ELSE
+            RAISE NOTICE 'Room % is nearly full (% space left)', v_name, v_spaces;
+        END IF;
     END LOOP;
-    CLOSE cur_low;
+    CLOSE cur_rooms;
 END $$;
 
 ------------------------------------------------------------
--- 8. Negative dispensing quantity; handle with EXCEPTION
+-- 8. Blank student number; handle with EXCEPTION
 ------------------------------------------------------------
 DO $$
 BEGIN
-    CALL dispense_medicine(1, '2024004', -5);
+    CALL allocate_room('   ', 1);
 EXCEPTION
     WHEN OTHERS THEN
         RAISE NOTICE 'Error handled: %', SQLERRM;
@@ -196,5 +195,5 @@ END $$;
 ------------------------------------------------------------
 -- 9. Final state of both tables
 ------------------------------------------------------------
-SELECT * FROM medicines ORDER BY medicine_id;
-SELECT * FROM dispensing_records ORDER BY record_id;
+SELECT * FROM hostel_rooms ORDER BY room_id;
+SELECT * FROM allocations ORDER BY allocation_id;
